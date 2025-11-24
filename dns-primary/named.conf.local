@@ -1,0 +1,8 @@
+include "/vagrant/dns-primary/tsig.key";
+
+zone "lab.local" {
+    type master;
+    file "/etc/bind/zones/db.lab.local";
+    allow-transfer { key transfer-key; 192.168.100.11; };
+    notify yes;
+};

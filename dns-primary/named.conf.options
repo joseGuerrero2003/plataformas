@@ -1,0 +1,22 @@
+options {
+    directory "/var/cache/bind";
+
+    recursion yes;
+    allow-query { any; };
+    allow-recursion { 192.168.100.0/24; localhost; };
+
+    // DNS64 configuration for NAT64 testing
+    dns64 64:ff9b:100::/96 {
+        clients { any; };
+        exclude { ::ffff:0:0/96; };
+    };
+
+    // Forwarders (optional)
+    forwarders { 1.1.1.1; 8.8.8.8; };
+
+    // Enable DNSSEC validation
+    dnssec-validation auto;
+
+    auth-nxdomain no;    # conform to RFC1035
+    listen-on { any; };
+};

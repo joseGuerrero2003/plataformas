@@ -1,0 +1,14 @@
+# Minimal Postfix config for lab
+myhostname = mail.lab
+myorigin = /etc/mailname
+mydestination = $myhostname, localhost.$mydomain, localhost, lab.local
+relayhost =
+mynetworks = 192.168.100.0/24, 127.0.0.0/8
+inet_interfaces = all
+inet_protocols = all
+home_mailbox = Maildir/
+smtpd_banner = $myhostname ESMTP
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+smtp_tls_security_level = may
+dovecot_destination_recipient_limit = 1
