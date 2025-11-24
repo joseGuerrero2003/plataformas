@@ -63,13 +63,14 @@ Arquitectura lógica:
 
 - Desde el secundario (recomendado):
   ```bash
-  docker compose exec dns_secondary dig @dns_primary lab.local AXFR
+  # Usar la IP fija del primario definida en `docker-compose.yml` (172.18.0.10)
+  docker compose exec dns_secondary dig @172.18.0.10 lab.local AXFR
   ```
   Resultado esperado: lista de registros de la zona y `Transfer status: success` en los logs del secundario.
 
 ### Problema detectado y solución aplicada (AXFR)
 
-- Síntoma: `dig @plataformas_dns_primary lab.local AXFR` devolvía "(2 servers found) ... Transfer failed." porque el nombre resolvía a A+AAAA y `dig` probaba una IP que no aceptaba AXFR.
+- Síntoma: `dig @172.18.0.10 lab.local AXFR` (o consultas hacia el primario) devolvían "(2 servers found) ... Transfer failed." porque la resolución devolvía A+AAAA y `dig` probaba una IP que no aceptaba AXFR.
 - Solución: desactivar IPv6 en la red Compose o usar `dig -4` y garantizar que la resolución seleccione la IPv4 correcta. En este repo se desactivó IPv6 para la red Compose y se usó IP fija para `dns_primary` (172.18.0.10). Además se creó `/etc/bind/zones/slaves` en el entrypoint para evitar errores al volcar archivos AXFR.
 
 ## Verificación específica (Mail)
@@ -415,3 +416,14 @@ vm-client2 ansible_host=192.168.56.22
 - Paquetes listados arriba instalables por playbook.
 - Certificados TLS (Let's Encrypt) o CA internal para TLS en mail y, si se desea, para HTTPS de paneles de administración.
 - Claves TSIG y claves DNSSEC generadas y almacenadas de forma segura.
+
+**Siguientes pasos — si quieres, puedo:**
+
+- 1) Generar un `Vagrantfile` de ejemplo con N máquinas (coordinado con la topología propuesta).
+- 2) Crear playbooks Ansible para aprovisionar: `ntp`, `dhcp`, `bind-dns` (master/slave), `bind-dns64`, `postfix+dovecot` y clientes.
+- 3) Añadir ejemplos concretos de zonas firmadas y scripts para firmarlas automáticamente.
+
+Si quieres que continúe y te entregue el `Vagrantfile` + playbooks de Ansible listos para ejecutar, dime cuántas VMs quieres crear en la máquina local y si prefieres `VirtualBox` o `libvirt`/KVM. También confirma si deseas DHCPv6 (stateful) o sólo SLAAC + RDNSS.
+
+---
+Archivo creado por: Guía de implementación automática. Para cualquier fragmento de configuración que quieras que genere completo (archivo listo para copiar), indícamelo y lo agrego al repo.

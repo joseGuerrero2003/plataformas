@@ -1,0 +1,185 @@
+**MConfig**
+
+Descripción: Comandos listos para presentar el proyecto al 100%. Incluye pasos para levantar los servicios, pruebas (DNS AXFR/TSIG/DNSSEC, Kea DHCP), cliente DHCP real (macvlan), comprobaciones de mail y NTP, logs y limpieza. Ejecuta los comandos tal como están (sustituye valores entre <> cuando se indique).
+
+**Prerequisitos**: Docker y Docker Compose instalados y con permisos de `sudo` para crear interfaces macvlan cuando sea necesario.
+
+- **Levantar todo el stack:** Inicia y construye todas las imágenes y contenedores.
+
+```bash
+docker compose up -d --build
+```
+
+- **Reconstruir y levantar un servicio específico (ej. DHCP):** Útil después de editar su configuración.
+
+```bash
+docker compose up -d --no-deps --build dhcp
+```
+
+- **Listar contenedores en ejecución (vista rápida):**
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+```
+
+**DNS (BIND) — verificación y debug**
+
+- **Ver logs de BIND (primario y secundario):**
+
+```bash
+docker compose logs -f --tail=200 dns_primary dns_secondary
+```
+
+- **Probar AXFR (transferencia de zona) desde el secundario contra el primario:**
+
+```bash
+docker compose exec dns_secondary dig @172.18.0.10 lab.local AXFR
+```
+
+- **Ver la clave TSIG usada (en contenedor / en host):**
+
+```bash
+# En el contenedor (si se copió a /etc/bind/keys)
+docker compose exec dns_primary cat /etc/bind/keys/tsig.key || true
+
+# En el repositorio (archivo fuente)
+cat dns-primary/tsig.key
+```
+
+**DHCP (Kea) — configuración y pruebas**
+
+- **Archivo principal Kea (ubicación en repo):** `dhcp/kea-dhcp4.conf`.
+
+- **Reconstruir/reiniciar DHCP tras cambios en la config:**
+
+```bash
+docker compose up -d --no-deps --build dhcp
+docker logs plataformas_dhcp --tail 200
+```
+
+- **Inspeccionar logs de Kea para actividad DHCP (discos de discover / asignaciones):**
+
+```bash
+docker logs plataformas_dhcp --follow
+```
+
+**Obtener un lease real (cliente DHCP) — método reproducido en este laboratorio**
+
+Nota: Docker bridge asigna IPs automáticamente a contenedores en redes bridge; para forzar un cliente DHCP real usamos una interfaz macvlan temporal en el host y pedimos el lease desde un contenedor que use la interfaz.
+
+1) Detectar la red compose y el bridge docker asociado (ejemplo):
+
+```bash
+docker network inspect plataformas_plataformas_net --format '{{.Id}} {{.Name}} {{json .Options}}'
+ip link show | grep br-    # buscar el bridge con prefijo br-<id>
+```
+
+2) Crear la interfaz macvlan en el host (reemplaza `br-XXXX` por el bridge detectado):
+
+```bash
+sudo ip link add link br-34676fe4d132 name mvtest0 type macvlan mode bridge
+sudo ip link set mvtest0 up
+```
+
+3) Pedir lease desde un contenedor Alpine y guardar el resultado en `dhcp-client-logs/eth0.lease`:
+
+```bash
+docker run --rm --network host --privileged -v "$PWD/dhcp-client-logs":/var/lib/dhcpcd alpine:3.18 \
+  sh -lc "apk add --no-cache udhcpc iproute2; udhcpc -i mvtest0 -n -q; ip -4 addr show dev mvtest0 | awk '/inet /{print \$2}' > /var/lib/dhcpcd/eth0.lease; cat /var/lib/dhcpcd/eth0.lease"
+```
+
+4) Comprobar lease guardado:
+
+```bash
+cat dhcp-client-logs/eth0.lease
+# Debe contener algo como: 172.18.0.50/16
+```
+
+5) Limpiar la interfaz macvlan cuando termines:
+
+```bash
+sudo ip link delete mvtest0
+```
+
+Consejos: Si prefieres no tocar el host, alternativa: crear una `macvlan` docker network (si tu host lo permite) o ejecutar el cliente en una VM.
+
+**Mail (Postfix + Dovecot) — verificación**
+
+- **Reconstruir y levantar mail service:**
+
+```bash
+docker compose up -d --no-deps --build mail
+```
+
+- **Enviar un correo de prueba desde dentro del contenedor mail:**
+
+```bash
+docker compose exec mail sendmail -v usuario@lab.local <<'EOF'
+Subject: Prueba
+
+Mensaje de prueba
+EOF
+```
+
+- **Comprobar entrega en Maildir del usuario dentro del contenedor:**
+
+```bash
+docker compose exec mail ls -l /home/usuario/Maildir/new
+docker compose exec mail tail -n 40 /var/log/mail.log || true
+```
+
+**NTP (Chrony) — verificación**
+
+- **Ver estado de Chrony dentro del contenedor NTP:**
+
+```bash
+docker compose exec ntp chronyc tracking
+docker compose exec ntp chronyc sources
+```
+
+**Comandos útiles de inspección y debug**
+
+- **Estado de todas las redes de docker:**
+
+```bash
+docker network ls
+docker network inspect plataformas_plataformas_net
+```
+
+- **Ver puertos y procesos que escuchan (host):**
+
+```bash
+sudo ss -lntup | grep -E '67|53|25|123' || true
+```
+
+- **Comprobar contenido de `dhcp/kea-dhcp4.conf` (para auditar subredes/pools):**
+
+```bash
+sed -n '1,200p' dhcp/kea-dhcp4.conf
+```
+
+**Comandos para devolver el entorno a su estado anterior / limpieza**
+
+- **Eliminar la interfaz macvlan temporal creada:**
+
+```bash
+sudo ip link delete mvtest0 || true
+```
+
+- **Eliminar contenedores y volúmenes creados (parada completa):**
+
+```bash
+docker compose down --volumes --remove-orphans
+```
+
+**Notas y recomendaciones**
+
+- Mantén `dhcp/kea-dhcp4.conf` sincronizado con la subred que quieres probar. En este laboratorio ajustamos Kea a `172.18.0.0/16` para que sirva la red Docker usada por `plataformas_plataformas_net`.
+- El método macvlan modifica la red del host. Usa `sudo` con cuidado; si trabajas en un entorno compartido o en Docker Desktop, puede que macvlan esté restringido.
+- Si necesitas que guarde más logs o trace más información, usa `-v` para montar directorios de logs dentro de los contenedores y consulta `docker logs <container>`.
+
+Si quieres, puedo:
+- Añadir un script `scripts/test_dhcp_client.sh` que automatice la creación macvlan, petición de lease y limpieza.
+- Hacer commit de los cambios que ya apliqué en `dhcp/kea-dhcp4.conf`.
+
+Fin de `MConfig`
