@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  dhcp:
+    network_mode: host
+    ports: []
+  dns_primary:
+    network_mode: host
+    ports: []
+  dns_secondary:
+    network_mode: host
+    ports: []
+  ntp:
+    network_mode: host
+    ports: []

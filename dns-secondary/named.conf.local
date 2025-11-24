@@ -1,7 +1,7 @@
-include "/vagrant/dns-primary/tsig.key";
+include "/etc/bind/tsig.key";
 
 zone "lab.local" {
     type slave;
-    masters { 192.168.100.10 key transfer-key; };
+    masters { 172.18.0.10 key transfer-key; };
     file "/etc/bind/zones/slaves/db.lab.local";
 };

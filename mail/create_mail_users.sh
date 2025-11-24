@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "[mail-users] Creating test users"
-for u in alice bob; do
+for u in alice bob usuario; do
   if id -u "$u" >/dev/null 2>&1; then
     echo "[mail-users] User $u already exists"
   else

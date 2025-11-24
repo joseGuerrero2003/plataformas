@@ -1,3 +1,131 @@
+**README — Plataforma de Laboratorio (Docker Compose)**
+
+Este documento recoge de forma concisa y profunda cómo se implementó el proyecto, la arquitectura elegida, el funcionamiento de los componentes, los comandos clave para construir, desplegar y verificar, y las razones técnicas detrás de las decisiones.
+
+## Resumen del proyecto
+
+- Orquestación: `docker compose` con servicios empaquetados mediante `Dockerfile` por servicio.
+- Servicios principales:
+  - `dhcp` (Kea) — servidor DHCPv4/6.
+  - `dns_primary` (BIND) — autoritativo primario con soporte TSIG/DNSSEC.
+  - `dns_secondary` (BIND) — esclavo que obtiene zonas por AXFR usando TSIG.
+  - `mail` (Postfix + Dovecot) — MTA/IMAP/POP para tests locales.
+  - `ntp` (Chrony) — sincronización horaria.
+
+## Arquitectura y decisiones principales
+
+- Docker Compose: facilidad para reproducir en una sola máquina y control de redes/volúmenes.
+- Red: una red bridge Docker `plataformas_net` con IPAM IPv4 (subnet `172.18.0.0/16`). Inicialmente se probó IPv6, pero se desactivó en la red Compose para evitar que el mismo nombre de servicio resolviera a A+AAAA y produjera ambigüedad en `dig` (causa de errores AXFR durante pruebas). Si se necesita IPv6, la alternativa es mantener registros A/AAAA coherentes o usar `dig -4`/`dig -6`.
+- Persistencia de claves: volumen Docker `bind_keys` para compartir `tsig.key` entre primario/secundario sin depender de permisos del host. El entrypoint DNS copia o genera la clave en tiempo de arranque.
+- Entrypoints: cada servicio tiene un entrypoint que prepara permisos, copia ficheros necesarios (por ejemplo `tsig.key`, ficheros de zona) y arranca los scripts en `scripts/`.
+
+Arquitectura lógica:
+
+- `dns_primary` (172.18.0.10) — mantiene las zonas maestras en `/etc/bind` y permite transferencias controladas por TSIG.
+- `dns_secondary` (172.18.0.11) — realiza AXFR periódicos/por notificación; almacena zonas en `/etc/bind/zones/slaves`.
+- `mail` — usa el `dns_primary` como resolver para que Postfix resuelva `lab.local` internamente.
+
+## Decisiones técnicas clave y su justificación
+
+- TSIG (HMAC-SHA256): protege transferencias AXFR entre master/slave sin necesidad de SSL. Es simple, estándar y adecuado para redes privadas de laboratorio.
+- Copia/generación de `tsig.key` en el entrypoint: cubre ambos casos — clave gestionada en el repo (seed) o generada automáticamente en el volumen compartido.
+- Volumen `bind_keys`: evita problemas de permisos con montajes directos del host y permite que `named` lea claves sin errores de `chown`/`chmod`.
+
+## Implementación — archivos importantes
+
+- Orquestador: `docker-compose.yml` (servicios, redes, puertos, volúmenes).
+- Entrypoints: `docker/dns/docker-entrypoint-dns.sh`, `docker/mail/docker-entrypoint-mail.sh`.
+- Scripts de arranque: `scripts/start_named.sh`, `scripts/start_mail_services.sh`, etc.
+- Configs de servicio: `dns-primary/`, `dns-secondary/`, `dhcp/`, `mail/`, `ntp/`.
+
+## Comandos clave
+
+- Construir todas las imágenes:
+  ```bash
+  docker compose build --parallel
+  # o con Makefile
+  make build
+  ```
+- Levantar (detached):
+  ```bash
+  docker compose up -d
+  # Reiniciar todo:
+  docker compose down && docker compose up -d --build
+  ```
+- Ver logs de un servicio:
+  ```bash
+  docker compose logs -f --tail=200 dns_primary
+  docker compose logs -f --tail=200 dns_secondary
+  docker compose logs -f --tail=200 mail
+  ```
+
+## Verificación específica (DNS AXFR)
+
+- Desde el secundario (recomendado):
+  ```bash
+  docker compose exec dns_secondary dig @dns_primary lab.local AXFR
+  ```
+  Resultado esperado: lista de registros de la zona y `Transfer status: success` en los logs del secundario.
+
+### Problema detectado y solución aplicada (AXFR)
+
+- Síntoma: `dig @plataformas_dns_primary lab.local AXFR` devolvía "(2 servers found) ... Transfer failed." porque el nombre resolvía a A+AAAA y `dig` probaba una IP que no aceptaba AXFR.
+- Solución: desactivar IPv6 en la red Compose o usar `dig -4` y garantizar que la resolución seleccione la IPv4 correcta. En este repo se desactivó IPv6 para la red Compose y se usó IP fija para `dns_primary` (172.18.0.10). Además se creó `/etc/bind/zones/slaves` en el entrypoint para evitar errores al volcar archivos AXFR.
+
+## Verificación específica (Mail)
+
+- Desde el contenedor `mail` enviar prueba:
+  ```bash
+  docker compose exec mail bash -lc "echo 'Prueba' | sendmail -v usuario@lab.local"
+  docker compose exec mail postqueue -p
+  docker compose exec mail ls -la /home/usuario/Maildir/new
+  docker compose exec mail bash -lc 'for f in /home/usuario/Maildir/new/*; do sed -n "1,200p" "$f"; done'
+  ```
+
+### Problema detectado y solución aplicada (Mail)
+
+- Síntomas: Postfix fallaba porque `/etc/mailname` no existía y el usuario receptor `usuario` no estaba en el contenedor; además el contenedor `mail` no siempre resolvía `lab.local` por usar el resolver Docker por defecto.
+- Solución aplicada:
+  - El entrypoint `docker-entrypoint-mail.sh` crea `/etc/mailname` con `lab.local` si no existe y copia la configuración `postfix-main.cf` del repo si está presente.
+  - Ejecuta `mail/create_mail_users.sh` durante arranque para crear usuarios de prueba (`usuario`, `alice`, `bob`).
+  - El servicio `mail` se configuró para usar `172.18.0.10` (el `dns_primary`) como DNS del contenedor para que Postfix resuelva `lab.local` correctamente.
+  - Verificación: envíos de prueba quedan en `/home/usuario/Maildir/new/`.
+
+## Comprobaciones adicionales
+
+- Validar configuración BIND:
+  ```bash
+  docker compose exec dns_primary named-checkconf /etc/bind/named.conf.local
+  docker compose exec dns_primary named-checkzone lab.local /etc/bind/zones/db.lab.local
+  ```
+- Revisar cola de Postfix:
+  ```bash
+  docker compose exec mail postqueue -p
+  docker compose exec mail postqueue -f
+  ```
+
+## Limitaciones y recomendaciones
+
+- DHCPv6 sobre Docker bridge puede limitar pruebas reales (multicast, enlaces). Para DHCP/DHCPv6 reales usar `network_mode: host` o VMs.
+- En producción no almacenar TSIG/DNSSEC keys en texto plano dentro del repo: usar un secreto manager o volúmenes cifrados.
+- Si se requiere IPv6 operativo, revisa y mantiene coherencia A/AAAA en las zonas, o prueba por protocolo explícito (`dig -4`, `dig -6`).
+
+## Próximos pasos sugeridos (opcionales)
+
+- Limpiar `main.cf` de Postfix respecto a parámetros no usados y configurar SASL/TLS para envío seguro.
+- Añadir pruebas automáticas (GitHub Actions) que construyan imágenes y verifiquen AXFR y entrega de mail básica.
+- Añadir un script que distribuya/generar y sincronice el `tsig.key` entre primario/secundario de forma segura.
+
+## Estado actual y opciones
+
+- Las correcciones aplicadas (entrypoints, `docker-compose.yml` y scripts) están en el workspace. Puedo:
+  - Hacer un commit con estos cambios, si quieres.
+  - Reconfigurar la red para mantener IPv6 y resolver coherencias de A/AAAA en lugar de desactivarlo.
+  - Añadir tests CI que validen AXFR y entrega de mail.
+
+---
+
+Si deseas que haga un commit de los cambios o que genere playbooks / Vagrantfile para desplegar en VMs, dime cuál prefieres y lo implemento.
 # Laboratorio Dual-Stack (IPv4 + IPv6) con Vagrant
 
 Este repositorio contiene una infraestructura de laboratorio Dual-Stack (IPv4 privado + IPv6 ULA) preparada para ejecutarse con `vagrant up`.

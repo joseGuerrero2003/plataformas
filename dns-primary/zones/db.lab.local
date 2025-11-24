@@ -1,0 +1,18 @@
+$TTL    3600
+@       IN      SOA     dns-primary.lab. admin.lab.local. (
+                        2025112401  ; Serial (YYYYMMDDnn)
+                        3600        ; Refresh
+                        900         ; Retry
+                        604800      ; Expire
+                        3600        ; Negative Cache TTL
+)
+
+; Nameservers
+        IN      NS      dns-primary.lab.
+        IN      NS      dns-secondary.lab.
+
+; Hosts
+dns-primary    IN      A       172.17.0.5
+dns-secondary  IN      A       172.17.0.2
+dhcp           IN      A       172.17.0.6
+mail           IN      A       172.17.0.7

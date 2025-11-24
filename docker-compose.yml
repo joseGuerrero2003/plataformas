@@ -1,0 +1,131 @@
+# Docker Compose para levantar los servicios del proyecto 'plataformas'.
+# Nota: por simplicidad este compose usa imágenes base `ubuntu:24.04`
+# e instala paquetes al arrancar. Para un entorno más rápido/estable,
+# sustituye por imágenes preconstruidas con Kea/Bind/Postfix/Chrony.
+
+services:
+  dhcp:
+    build:
+      context: .
+      dockerfile: docker/dhcp/Dockerfile
+    container_name: plataformas_dhcp
+    volumes:
+      - ./dhcp:/etc/kea:ro
+      - ./scripts:/opt/plataformas/scripts:ro
+    working_dir: /opt/plataformas
+    # DHCP usa UDP/67; para que funcione en red real puede necesitar
+    # network_mode: "host" (descomentar más abajo). También agregamos
+    # capacidades para manipular red.
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "67:67/udp"
+    entrypoint: ["/opt/plataformas/docker-entrypoint-dhcp.sh"]
+    restart: unless-stopped
+    networks:
+      - plataformas_net
+
+  dns_primary:
+    build:
+      context: .
+      dockerfile: docker/dns/Dockerfile
+    container_name: plataformas_dns_primary
+    volumes:
+      - ./dns-primary:/etc/bind
+      - bind_keys:/var/lib/bind/keys
+      - ./scripts:/opt/plataformas/scripts:ro
+    working_dir: /opt/plataformas
+    # Por defecto mapeamos a puertos alternativos en el host para evitar
+    # conflictos con un DNS local (systemd-resolved). Para producción
+    # puedes usar `docker-compose.override-host.yml` y `network_mode: host`.
+    ports:
+      - "5354:53/tcp"
+      - "5354:53/udp"
+    entrypoint: ["/opt/plataformas/docker-entrypoint-dns.sh"]
+    restart: unless-stopped
+    networks:
+      plataformas_net:
+        ipv4_address: 172.18.0.10
+
+  dns_secondary:
+    build:
+      context: .
+      dockerfile: docker/dns/Dockerfile
+    container_name: plataformas_dns_secondary
+    volumes:
+      - ./dns-secondary:/etc/bind
+      - ./scripts:/opt/plataformas/scripts:ro
+      - bind_keys:/var/lib/bind/keys
+    working_dir: /opt/plataformas
+    ports:
+      # Mapeamos a otro puerto para evitar conflicto local; si se desea
+      # usar puerto 53 real, usar `network_mode: host` o ajustar lo anterior.
+      - "5353:53/tcp"
+      - "5353:53/udp"
+    entrypoint: ["/opt/plataformas/docker-entrypoint-dns.sh", "--secondary"]
+    restart: unless-stopped
+    networks:
+      plataformas_net:
+        ipv4_address: 172.18.0.11
+    depends_on:
+      - dns_primary
+
+  mail:
+    build:
+      context: .
+      dockerfile: docker/mail/Dockerfile
+    container_name: plataformas_mail
+    volumes:
+      - ./mail:/opt/mail:ro
+      - ./scripts:/opt/plataformas/scripts:ro
+    working_dir: /opt/plataformas
+    ports:
+      - "25:25"
+      - "143:143"
+      - "993:993"
+    entrypoint: ["/opt/plataformas/docker-entrypoint-mail.sh"]
+    restart: unless-stopped
+    networks:
+      - plataformas_net
+    dns:
+      - 172.18.0.10
+    depends_on:
+      - dns_primary
+
+  ntp:
+    build:
+      context: .
+      dockerfile: docker/ntp/Dockerfile
+    container_name: plataformas_ntp
+    volumes:
+      - ./ntp:/etc/chrony:ro
+      - ./scripts:/opt/plataformas/scripts:ro
+    working_dir: /opt/plataformas
+    ports:
+      - "123:123/udp"
+    entrypoint: ["/opt/plataformas/docker-entrypoint-ntp.sh"]
+    cap_add:
+      - SYS_TIME
+    restart: unless-stopped
+    networks:
+      - plataformas_net
+
+networks:
+  plataformas_net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.18.0.0/16
+
+volumes:
+  bind_keys:
+    driver: local
+
+# Sugerencias:
+# - Para que servicios como DHCP y DNS respondan en la red de la máquina
+#   host (p. ej. para pruebas reales en la LAN), edita cada servicio y
+#   añade: `network_mode: "host"` (y elimina la sección `ports`).
+# - Si prefieres no instalar paquetes en tiempo de arranque, crea imágenes
+#   Docker customizadas que incluyan Kea/Bind/Postfix/Chrony y reemplaza
+#   `image: ubuntu:24.04` por la imagen correspondiente.
