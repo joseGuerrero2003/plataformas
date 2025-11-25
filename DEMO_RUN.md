@@ -188,12 +188,3 @@ TROUBLESHOOTING: problemas comunes y soluciones
 - Error: paquetes no encontrados o apt falla
   - Solución: revisa conectividad de red desde el contenedor: `docker exec -it <container> ping -c2 8.8.8.8` y reintenta `apt-get update`.
 
-Notas finales
--------------
-- Este archivo contiene procedimientos para verificar el laboratorio y comandos alternativos para arrancar manualmente servicios cuando `systemd` no está disponible dentro de contenedores. Para un entorno Docker más reproducible, recomendamos crear imágenes Docker ya preparadas (con Kea, BIND, Postfix, Dovecot instalados y configurados) y actualizar `Vagrantfile` para usar esas imágenes en lugar de instalar paquetes en tiempo de arranque.
-
-Si quieres, puedo:
-- Crear imágenes Docker personalizadas para cada servicio y actualizar `Vagrantfile` para usarlas. (Recomendado para producción y Codespaces). 
-- Añadir un script `verify_all.sh` que ejecute todas las comprobaciones automáticamente y genere un informe.
-
-*** Fin de DEMO_RUN.md

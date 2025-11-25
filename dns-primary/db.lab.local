@@ -1,5 +1,5 @@
 $TTL    3600
-@       IN      SOA     dns-primary.lab. admin.lab.local. (
+@       IN      SOA     dns-primary.lab.local. admin.lab.local. (
                         2025112401  ; Serial (YYYYMMDDnn)
                         3600        ; Refresh
                         900         ; Retry

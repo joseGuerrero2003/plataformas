@@ -167,10 +167,3 @@ dig @127.0.0.1 -p 5353 lab.local SOA +short
 docker compose down
 docker compose up -d --build
 ```
-
-13) Información adicional
-
-- Si quieres que automatice la regeneración de `tsig.key` y la distribución entre primario/segundo, dímelo y lo incluyo como script de entrada y copia segura entre contenedores.
-
----
-Archivo generado automáticamente: `iniciar_docker.md` — sigue los pasos en el orden indicado.
